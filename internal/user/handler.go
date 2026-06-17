@@ -78,9 +78,23 @@ func (h *UserHandler) List(w nethttp.ResponseWriter, r *nethttp.Request) {
 }
 
 func (h *UserHandler) GetByID(w nethttp.ResponseWriter, r *nethttp.Request) {
-	resp, err := h.service.GetByID(r.Context(), r.PathValue("id"))
+	/* 	resp, err := h.service.GetByID(r.Context(), r.PathValue("id")) */
+
+	ctx := r.Context()
+	userID := r.PathValue("id")
+
+	userm, err := h.service.GetByID(ctx, userID)
 	if err != nil {
 		handleUserError(w, err)
+		return
+	}
+
+	fieldMask := shared.ParseFieldMask(r)
+
+	resp, errMask := ApplyUserFieldMask(&userm, fieldMask)
+
+	if errMask != nil {
+		platformhttp.ErrorJsonV2(w, nethttp.StatusBadRequest, errMask)
 		return
 	}
 
