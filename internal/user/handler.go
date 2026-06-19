@@ -5,7 +5,9 @@ import (
 	"errors"
 	platformhttp "estatehub-api/internal/platform/http"
 	"estatehub-api/internal/platform/shared"
+	"io"
 	nethttp "net/http"
+	"strings"
 )
 
 type UserHandler struct {
@@ -105,17 +107,63 @@ func (h *UserHandler) Update(w nethttp.ResponseWriter, r *nethttp.Request) {
 	var req UpdateUserRequest
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		platformhttp.ErrorJson(w, nethttp.StatusBadRequest, "invalid request body")
-		return
-	}
+		ctx := r.Context()
 
-	resp, err := h.service.Update(r.Context(), r.PathValue("id"), req)
-	if err != nil {
-		handleUserError(w, err)
-		return
-	}
+		userID := strings.TrimPrefix(r.URL.Path, "/v1/users/")
+		if userID == "" {
+			platformhttp.ErrorJsonV2(w, nethttp.StatusBadRequest, &shared.APIError{
+				StatusCode: nethttp.StatusBadRequest,
+				ErrorBody: shared.ErrorBody{
+					Code:    "missing_user_id",
+					Message: "Missing user id",
+					Field:   "user_id",
+				},
+			})
+			return
+		}
 
-	platformhttp.WriteJson(w, nethttp.StatusOK, resp)
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			platformhttp.ErrorJsonV2(w, nethttp.StatusBadRequest, &shared.APIError{
+				StatusCode: nethttp.StatusBadRequest,
+				ErrorBody: shared.ErrorBody{
+					Code:    "invalid_body",
+					Message: "Invalid request body",
+				},
+			})
+			return
+		}
+
+		fieldMask, apiErr := shared.ParsePatchFieldMask(
+			r,
+			body,
+			allowedUserPatchFieldMask,
+		)
+		if apiErr != nil {
+			platformhttp.ErrorJsonV2(w, nethttp.StatusBadRequest, apiErr)
+			return
+		}
+
+		var req UpdateUserRequest
+		if err := json.Unmarshal(body, &req); err != nil {
+			platformhttp.ErrorJsonV2(w, nethttp.StatusBadRequest, &shared.APIError{
+				StatusCode: nethttp.StatusBadRequest,
+				ErrorBody: shared.ErrorBody{
+					Code:    "invalid_json",
+					Message: "Invalid JSON body",
+				},
+			})
+			return
+		}
+
+		user, apiErr := h.service.Update(ctx, userID, req, fieldMask)
+		if apiErr != nil {
+			platformhttp.ErrorJsonV2(w, nethttp.StatusBadRequest, apiErr)
+			return
+		}
+
+		platformhttp.WriteJson(w, nethttp.StatusOK, user)
+	}
 }
 
 func (h *UserHandler) Delete(w nethttp.ResponseWriter, r *nethttp.Request) {

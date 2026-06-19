@@ -4,6 +4,8 @@ import (
 	"context"
 	"estatehub-api/internal/platform/shared"
 	utils "estatehub-api/internal/utils"
+	"net/http"
+	nethttp "net/http"
 	"strings"
 )
 
@@ -75,49 +77,90 @@ func (s *UserService) GetByID(ctx context.Context, userID string) (UserResponse,
 	return ToUserResponse(&user), nil
 }
 
-func (s *UserService) Update(ctx context.Context, userID string, req UpdateUserRequest) (UserResponse, error) {
-	if strings.TrimSpace(userID) == "" {
-		return UserResponse{}, ErrInvalidID
-	}
+func (s *UserService) Update(ctx context.Context, userID string, req UpdateUserRequest, fieldMask shared.FieldMask) (UserResponse, *shared.APIError) {
 
-	if err := req.Validate(); err != nil {
-		return UserResponse{}, err
-	}
-
-	existingUser, err := s.repo.GetByID(ctx, userID)
-	if err != nil {
-		return UserResponse{}, err
-	}
-
-	if req.Name != nil {
-		existingUser.Name = strings.TrimSpace(*req.Name)
-	}
-
-	if req.Email != nil {
-		existingUser.Email = strings.TrimSpace(*req.Email)
-	}
-
-	if req.Type != nil {
-		existingUser.Type = strings.TrimSpace(*req.Type)
-	}
-
-	if req.Password != nil {
-		hashedPassword, err := utils.HashPassword(*req.Password)
-		if err != nil {
-			return UserResponse{}, ErrFailedToUpdateUser
+	if fieldMask.IsEmpty() {
+		return UserResponse{}, &shared.APIError{
+			StatusCode: nethttp.StatusBadRequest,
+			ErrorBody: shared.ErrorBody{
+				Code:    "invalid_field_mask",
+				Message: "field_mask cannot be empty",
+				Field:   "field_mask",
+			},
 		}
 
-		existingUser.PasswordHash = hashedPassword
 	}
 
-	existingUser.UpdatedAt = utils.Now()
+	patch := UpdateUserRequest{}
 
-	updatedUser, err := s.repo.Update(ctx, &existingUser)
+	for _, field := range fieldMask {
+		switch field {
+		case "name":
+			if req.Name == nil {
+				return UserResponse{}, &shared.APIError{
+					StatusCode: http.StatusBadRequest,
+					ErrorBody: shared.ErrorBody{
+						Code:    "missing_patch_field",
+						Message: "Field mask contains field missing from body",
+						Field:   "name",
+					},
+				}
+			}
+
+			if *req.Name == "" {
+				return UserResponse{}, &shared.APIError{
+					StatusCode: http.StatusBadRequest,
+					ErrorBody: shared.ErrorBody{
+						Code:    "invalid_name",
+						Message: "Name cannot be empty",
+						Field:   "name",
+					},
+				}
+			}
+
+			patch.Name = req.Name
+
+		case "email":
+			if req.Email == nil {
+				return UserResponse{}, &shared.APIError{
+					StatusCode: http.StatusBadRequest,
+					ErrorBody: shared.ErrorBody{
+						Code:    "missing_patch_field",
+						Message: "Field mask contains field missing from body",
+						Field:   "email",
+					},
+				}
+			}
+
+			if *req.Email == "" {
+				return UserResponse{}, &shared.APIError{
+					StatusCode: http.StatusBadRequest,
+					ErrorBody: shared.ErrorBody{
+						Code:    "invalid_email",
+						Message: "Email cannot be empty",
+						Field:   "email",
+					},
+				}
+			}
+
+			patch.Email = req.Email
+		}
+
+	}
+
+	updatedUser, err := s.repo.Update(ctx, userID, patch, patch)
 	if err != nil {
-		return UserResponse{}, err
+		return UserResponse{}, &shared.APIError{
+			StatusCode: http.StatusBadRequest,
+			ErrorBody: shared.ErrorBody{
+				Code:    "failed_to_update_user",
+				Message: "Failed to update user",
+			},
+		}
 	}
 
 	return ToUserResponse(&updatedUser), nil
+
 }
 
 func (s *UserService) Delete(ctx context.Context, userID string) error {

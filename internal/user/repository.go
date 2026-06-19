@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"estatehub-api/internal/platform/shared"
 	"fmt"
+	"net/http"
+	"strings"
 )
 
 type UserRepository interface {
@@ -138,8 +140,74 @@ func (r *Repository) GetBrokers(ctx context.Context, limit int, offset int) ([]B
 	return brokers, nil
 }
 
-func (r *Repository) Update(ctx context.Context, user *User) (User, error) {
-	return User{}, nil
+func (r *Repository) Update(ctx context.Context, userID string, req UpdateUserRequest, patch UpdateUserRequest) (User, *shared.APIError) {
+	sets := []string{}
+	args := []any{}
+
+	if patch.Name != nil {
+		args = append(args, *patch.Name)
+		sets = append(sets, fmt.Sprintf("name = $%d", len(args)))
+	}
+
+	if patch.Email != nil {
+		args = append(args, *patch.Email)
+		sets = append(sets, fmt.Sprintf("email = $%d", len(args)))
+	}
+
+	if len(sets) == 0 {
+		return User{}, &shared.APIError{
+			StatusCode: http.StatusBadRequest,
+			ErrorBody: shared.ErrorBody{
+				Code:    "empty_patch",
+				Message: "No fields to update",
+			},
+		}
+	}
+
+	sets = append(sets, "updated_at = NOW()")
+
+	args = append(args, userID)
+	idArg := len(args)
+
+	query := fmt.Sprintf(`
+		UPDATE users
+		SET %s
+		WHERE id = $%d
+		RETURNING id, name, email, created_at, updated_at
+	`, strings.Join(sets, ", "), idArg)
+
+	var user User
+
+	err := r.db.QueryRowContext(ctx, query, args...).Scan(
+		&user.ID,
+		&user.Name,
+		&user.Email,
+		&user.CreatedAt,
+		&user.UpdatedAt,
+	)
+
+	if err == sql.ErrNoRows {
+		return User{}, &shared.APIError{
+			StatusCode: http.StatusNotFound,
+			ErrorBody: shared.ErrorBody{
+				Code:    "user_not_found",
+				Message: "User not found",
+				Field:   "user_id",
+			},
+		}
+	}
+
+	if err != nil {
+		return User{}, &shared.APIError{
+			StatusCode: http.StatusInternalServerError,
+			ErrorBody: shared.ErrorBody{
+				Code:    "user_update_failed",
+				Message: "Failed to update user",
+			},
+		}
+	}
+
+	return user, nil
 }
 
 func (r *Repository) Delete(ctx context.Context, userId string) error {

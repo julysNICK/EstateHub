@@ -10,6 +10,11 @@ var allowedUserFieldMask = map[string]struct{}{
 	"updated_at": {},
 }
 
+var allowedUserPatchFieldMask = map[string]struct{}{
+	"name": {},
+	"type": {},
+}
+
 func ApplyUserFieldMask(user *UserResponse, fieldMask shared.FieldMask) (map[string]any, *shared.APIError) {
 	if err := fieldMask.Validate(allowedUserFieldMask); err != nil {
 		return nil, err
